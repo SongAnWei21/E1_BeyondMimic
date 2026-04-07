@@ -1,0 +1,147 @@
+from isaaclab.utils import configclass
+from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import SceneEntityCfg
+import e1_lab.tasks.tracking.mdp as mdp
+
+from e1_lab.robots.e1_21dof import E1_21DOF_CFG, E1_21DOF_ACTION_SCALE
+from e1_lab.tasks.tracking.tracking_env_cfg import TrackingEnvCfg
+
+@configclass
+class E1_21DOF_EnvCfg(TrackingEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        # ================= 基础机器人与动作配置 =================
+        self.scene.robot = E1_21DOF_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.actions.joint_pos.scale = E1_21DOF_ACTION_SCALE
+
+        common_joints = [
+            'left_hip_pitch_joint', 'left_hip_roll_joint', 'left_hip_yaw_joint', 'left_knee_joint', 'left_ankle_pitch_joint', 'left_ankle_roll_joint',
+            'right_hip_pitch_joint', 'right_hip_roll_joint', 'right_hip_yaw_joint', 'right_knee_joint', 'right_ankle_pitch_joint', 'right_ankle_roll_joint', 
+            "waist_yaw_joint",
+            "left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_shoulder_yaw_joint", "left_elbow_joint",
+            "right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_shoulder_yaw_joint", "right_elbow_joint",
+        ]
+        self.actions.joint_pos.joint_names = common_joints
+        self.commands.motion.joint_names = common_joints
+
+        self.commands.motion.anchor_body_name = "torso_link"
+        self.commands.motion.body_names = [
+            "pelvis", "left_hip_yaw_link", "left_knee_link", "left_ankle_roll_link",
+            "right_hip_yaw_link", "right_knee_link", "right_ankle_roll_link", "torso_link",
+            "left_shoulder_pitch_link", "left_shoulder_roll_link", "left_shoulder_yaw_link", "left_elbow_link",
+            "right_shoulder_pitch_link", "right_shoulder_roll_link", "right_shoulder_yaw_link", "right_elbow_link",
+        ]
+
+        # ================= 查看器与终止条件 =================
+        self.viewer.eye = (3.0, 3.0, 2.0) 
+        self.viewer.lookat = (0.0, 0.0, 1.0) 
+        self.viewer.origin_type = "world" 
+        self.viewer.asset_name = None 
+        self.scene.contact_forces.debug_vis = False 
+        self.commands.motion.debug_vis = False 
+
+        self.terminations.ee_body_pos.params["body_names"] = [
+            "left_ankle_roll_link", "right_ankle_roll_link", "left_elbow_link", "right_elbow_link",
+        ]
+
+        # ================= 奖励塑形  =================
+        self.rewards.motion_body_pos.weight = 2.0          
+        self.rewards.motion_body_pos.params["std"] = 0.5 # 加大得分std  
+        self.rewards.joint_limit.weight = -1.0     # 关节限位惩罚   -1 -> -10
+        self.rewards.action_rate_l2.weight = -0.1   # 动作平滑      -0.5 -> -0.2
+        self.rewards.joint_acc_l2.weight = -1e-7       
+        self.rewards.dof_torques_l2.weight = -1e-5   
+
+        self.rewards.undesired_contacts.params["sensor_cfg"] = SceneEntityCfg(
+            "contact_forces", body_names=[r"^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)(?!left_elbow_link$)(?!right_elbow_link$).+$"],
+        )
+        
+        # ================= 目标命令的随机扰动 =================
+        self.commands.motion.velocity_range = {
+            "x": (-0.5, 0.5),  # X方向速度偏移
+            "y": (-0.5, 0.5),  # X方向速度偏移
+            "z": (-0.3, 0.3),  # Z方向速度偏移
+            "roll": (-0.6, 0.6),  # 翻滚角偏移
+            "pitch": (-0.6, 0.6), # 俯仰角偏移
+            "yaw": (-0.8, 0.8)  # 偏航角偏移
+        }
+
+        self.commands.motion.pose_range = {
+            "x": (-0.05, 0.05),              # X方向位置偏移(m)
+            "y": (-0.05, 0.05),              # Y方向位置偏移(m)
+            "z": (-0.01, 0.01),              # Z方向位置偏移(m)
+            "roll": (-0.1, 0.1),             # 翻滚角偏移(rad)
+            "pitch": (-0.1, 0.1),            # 俯仰角偏移(rad)
+            "yaw": (-0.2, 0.2),              # 偏航角偏移(rad)
+        }
+        
+        self.commands.motion.joint_position_range = (-0.1, 0.1) # 关节位置偏移
+
+        # 推力速度大小
+        # STAGE1_PUSH_VEL = {
+        #     "x": (-1.2, 1.2), 
+        #     "y": (-1.2, 1.2),  
+        #     "z": (-0.8, 0.8),
+        #     "roll": (-1.0, 1.0),
+        #     "pitch": (-1.0, 1.0),
+        #     "yaw": (-1.0, 1.0),
+        # }
+
+        STAGE1_PUSH_VEL = {
+            "x": (-0.5, 0.5), 
+            "y": (-0.5, 0.5),  
+            "z": (-0.2, 0.2),
+            "roll": (-0.5, 0.5),
+            "pitch": (-0.5, 0.5),
+            "yaw": (-0.7, 0.7),
+        }
+
+        # 推力 
+        self.events.push_robot = EventTerm(
+            func=mdp.push_by_setting_velocity,
+            mode="interval", interval_range_s=(1.0, 3.0),
+            params={"velocity_range": STAGE1_PUSH_VEL},
+        )
+
+        # 质量随机化 
+        self.events.randomize_mass = EventTerm(
+            func=mdp.randomize_rigid_body_mass,
+            mode="startup",
+            params={"asset_cfg": SceneEntityCfg("robot", body_names=".*"), "mass_distribution_params": (0.9, 1.1), "operation": "scale"},
+        )
+        
+        # 质心微调随机化
+        self.events.base_com = EventTerm(
+            func=mdp.randomize_rigid_body_com, mode="startup",
+            params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link"), "com_range": {"x": (-0.025, 0.025), "y": (-0.05, 0.05), "z": (-0.05, 0.05)}},
+        )
+
+        # 地面材质随机化 
+        self.events.physics_material = EventTerm(
+            func=mdp.randomize_rigid_body_material, mode="startup",
+            params={"asset_cfg": SceneEntityCfg("robot", body_names=".*"), "static_friction_range": (0.5, 3), "dynamic_friction_range": (0.5, 3), "restitution_range": (0.0, 0.5), "num_buckets": 64},
+        )
+
+        # PD参数随机化
+        self.events.randomize_pd = EventTerm(
+            func=mdp.randomize_actuator_gains, mode="startup",
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*"]), "stiffness_distribution_params": (0.8, 1.2), "damping_distribution_params": (0.8, 1.2), "operation": "scale"},
+        )
+
+        # 摩擦力随机化 
+        self.events.randomize_joint_friction = EventTerm(
+            func=mdp.randomize_joint_parameters,
+            mode="startup",
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*"]), "friction_distribution_params": (0.0, 0.02), "operation": "add"},
+        )
+
+        # 转子惯量随机化
+        self.events.randomize_joint_armature = EventTerm(
+            func=mdp.randomize_joint_parameters, mode="startup",
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*"]), "armature_distribution_params": (0.8, 1.2), "operation": "scale"},
+        )
+        
+        # 裁剪无用观测
+        self.observations.policy.motion_anchor_pos_b = None
+        self.observations.policy.base_lin_vel = None

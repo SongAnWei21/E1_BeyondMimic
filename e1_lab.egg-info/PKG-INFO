@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: e1_lab
+Version: 1.0.0
+Requires-Dist: mujoco==3.3.3
+Requires-Dist: mujoco-python-viewer
+Requires-Dist: psutil
+Requires-Dist: joblib>=1.2.0
+Requires-Dist: pynput
+Dynamic: requires-dist
